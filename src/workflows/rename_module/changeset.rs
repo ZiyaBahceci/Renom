@@ -10,7 +10,7 @@ use crate::{
     unreal::{Module, ModuleType, Plugin},
 };
 
-use super::context::Context;
+use super::Context;
 
 /// Generate a changeset to rename an Unreal Engine module.
 pub fn generate_changeset(context: &Context) -> Vec<Change> {

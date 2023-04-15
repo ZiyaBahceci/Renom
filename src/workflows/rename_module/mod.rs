@@ -1,5 +1,4 @@
 mod changeset;
-mod context;
 
 use std::{
     ffi::OsStr,
@@ -7,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inquire::{validator::Validation, Confirm, CustomUserError, Select, Text};
+use inquire::{validator::Validation, CustomUserError, Select, Text};
 use regex::Regex;
 use walkdir::WalkDir;
 
@@ -17,27 +16,89 @@ use crate::{
     unreal::{Module, ModuleType, Plugin},
 };
 
-use self::{changeset::generate_changeset, context::Context};
+use self::changeset::generate_changeset;
 
-pub fn start_rename_module_workflow() -> Result<(), String> {
-    let context = gather_context()?;
+/// Params needed to rename an Unreal Engine module.
+pub struct Params {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// The specific module to rename.
+    pub module: String,
+    /// The target name for the module.
+    pub new_name: String,
+}
+
+/// Context needed to rename an Unreal Engine module.
+pub struct Context {
+    /// The root of the project that the module is part of.
+    pub project_root: PathBuf,
+    /// The name of the project.
+    pub project_name: String,
+    /// Build targets for the project that the module is part of.
+    pub project_targets: Vec<PathBuf>,
+    /// Config files for the project.
+    pub project_config_files: Vec<PathBuf>,
+    /// Code modules in the project.
+    pub modules: Vec<Module>,
+    /// The specific module to rename.
+    pub target_module: Module,
+    /// The target name for the module.
+    pub target_name: String,
+    /// The source file that includes the module implement macro.
+    pub source_with_implement_macro: Option<PathBuf>,
+    /// Header files that include the module export macro.
+    pub headers_with_export_macro: Vec<PathBuf>,
+}
+
+/// Rename an Unreal Engine module interactively, soliciting input parameters
+/// from the user with validation and guided selection.
+pub fn rename_module_interactive() -> Result<(), String> {
+    let params = get_params_from_user()?;
+    rename_module(params)
+}
+
+/// Rename an Unreal Engine module.
+pub fn rename_module(params: Params) -> Result<(), String> {
+    validate_params(&params)?;
+    let context = gather_context(&params)?;
     let changeset = generate_changeset(&context);
     let backup_dir = create_backup_dir(&context.project_root)?;
     let mut engine = Engine::new();
-    if let Err(err) = engine.execute(changeset, backup_dir) {
-        log::error(&err);
-        if user_confirms_revert() {
-            engine.revert()?;
-        }
+    if let Err(e) = engine.execute(changeset, backup_dir) {
+        log::error(&e);
+        engine.revert()?;
         print_failure_message(&context);
         return Ok(());
     }
+
     print_success_message(&context);
     Ok(())
 }
 
-fn gather_context() -> Result<Context, String> {
+fn validate_params(_params: &Params) -> Result<(), String> {
+    // @todo
+    Ok(())
+}
+
+fn get_params_from_user() -> Result<Params, String> {
     let project_root = get_project_root_from_user()?;
+    let project_plugins = detect_project_plugins(&project_root)?;
+    let modules = detect_project_modules(&project_root)?
+        .into_iter()
+        .chain(detect_plugin_modules(&project_plugins)?)
+        .collect::<Vec<Module>>();
+    let target_module = get_target_module_from_user(&modules)?;
+    let target_name = get_target_name_from_user(&modules)?;
+
+    Ok(Params {
+        project_root,
+        module: target_module.name,
+        new_name: target_name,
+    })
+}
+
+fn gather_context(params: &Params) -> Result<Context, String> {
+    let project_root = params.project_root.clone();
     let project_name = detect_project_name(&project_root)?;
     let project_plugins = detect_project_plugins(&project_root)?;
     let modules = detect_project_modules(&project_root)?
@@ -46,8 +107,11 @@ fn gather_context() -> Result<Context, String> {
         .collect::<Vec<Module>>();
     let project_targets = detect_project_targets(&project_root)?;
     let project_config_files = detect_project_config_files(&project_root)?;
-    let target_module = get_target_module_from_user(&modules)?;
-    let target_name = get_target_name_from_user(&modules)?;
+    let target_module = modules
+        .iter()
+        .find(|module| module.name == params.module)
+        .unwrap()
+        .clone();
     let implementing_source = find_implementing_source(&target_module.root);
     let headers_with_export_macro =
         find_headers_with_export_macro(&target_module.root, &target_module.name);
@@ -59,7 +123,7 @@ fn gather_context() -> Result<Context, String> {
         project_config_files,
         modules,
         target_module,
-        target_name,
+        target_name: params.new_name.clone(),
         source_with_implement_macro: implementing_source,
         headers_with_export_macro,
     })
@@ -340,13 +404,6 @@ fn create_backup_dir(project_root: &Path) -> Result<PathBuf, String> {
     let backup_dir = project_root.join(".renom/backup");
     fs::create_dir_all(&backup_dir).map_err(|err| err.to_string())?;
     Ok(backup_dir)
-}
-
-/// Request revert desired from the user.
-fn user_confirms_revert() -> bool {
-    Confirm::new("Looks like something went wrong. Should we revert the changes made so far?")
-        .prompt()
-        .unwrap_or(false)
 }
 
 fn print_success_message(context: &Context) {
