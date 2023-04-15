@@ -9,7 +9,7 @@ pub fn generate_changeset(context: &Context) -> Vec<Change> {
     let Context {
         project_root,
         project_name: old_name,
-        target_name: new_name,
+        new_name,
     } = context;
 
     vec![

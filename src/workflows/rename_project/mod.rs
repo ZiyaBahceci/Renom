@@ -17,7 +17,7 @@ use self::{changeset::generate_changeset, interactive::get_params_from_user};
 pub struct Params {
     /// The root of the project.
     pub project_root: PathBuf,
-    /// The target name for the project.
+    /// The new name for the project.
     pub new_name: String,
 }
 
@@ -27,8 +27,8 @@ pub struct Context {
     pub project_root: PathBuf,
     /// The name of the project.
     pub project_name: String,
-    /// The target name for the project.
-    pub target_name: String,
+    /// The new name for the project.
+    pub new_name: String,
 }
 
 /// Rename an Unreal Engine project interactively, soliciting input parameters
@@ -131,7 +131,7 @@ fn gather_context(params: &Params) -> Result<Context, String> {
     Ok(Context {
         project_root: params.project_root.clone(),
         project_name,
-        target_name: params.new_name.clone(),
+        new_name: params.new_name.clone(),
     })
 }
 
@@ -163,13 +163,13 @@ fn create_backup_dir(project_root: &Path) -> Result<PathBuf, String> {
 fn print_success_message(context: &Context) {
     log::success(format!(
         "Successfully renamed project {} to {}.",
-        context.project_name, context.target_name
+        context.project_name, context.new_name
     ));
 }
 
 fn print_failure_message(context: &Context) {
     log::error(format!(
         "Failed to rename project {} to {}.",
-        context.project_name, context.target_name
+        context.project_name, context.new_name
     ));
 }
