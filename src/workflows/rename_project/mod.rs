@@ -1,6 +1,4 @@
-pub mod changeset;
-mod context;
-mod params;
+mod changeset;
 
 use std::{
     ffi::OsStr,
@@ -13,7 +11,25 @@ use regex::Regex;
 
 use crate::{engine::Engine, presentation::log};
 
-use self::{changeset::generate_changeset, context::Context, params::Params};
+use self::changeset::generate_changeset;
+
+/// Params needed to rename an Unreal Engine project.
+pub struct Params {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// The target name for the project.
+    pub new_name: String,
+}
+
+/// Context needed to rename an Unreal Engine project.
+pub struct Context {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// The name of the project.
+    pub project_name: String,
+    /// The target name for the project.
+    pub target_name: String,
+}
 
 /// Rename an Unreal Engine project interactively, soliciting input parameters
 /// from the user with validation and guided selection.

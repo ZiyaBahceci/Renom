@@ -1,9 +1,8 @@
 use std::path::Path;
 
-use crate::{
-    changes::{Change, RenameFile, SetIniEntry},
-    workflows::rename_project::context::Context,
-};
+use crate::changes::{Change, RenameFile, SetIniEntry};
+
+use super::Context;
 
 /// Generate a changeset to rename an Unreal Engine project.
 pub fn generate_changeset(context: &Context) -> Vec<Change> {
