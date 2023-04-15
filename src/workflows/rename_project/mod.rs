@@ -1,4 +1,4 @@
-mod changeset;
+pub mod changeset;
 mod context;
 
 use std::{
@@ -13,6 +13,39 @@ use regex::Regex;
 use crate::{engine::Engine, presentation::log};
 
 use self::{changeset::generate_changeset, context::Context};
+
+pub struct Input {
+    pub project_root: PathBuf,
+    pub new_name: String,
+}
+
+pub fn validate_input(input: &Input) -> Result<(), String> {
+    if !input.project_root.is_dir() {
+        return Err("project root must be a directory".into());
+    }
+    if !fs::read_dir(&input.project_root)
+        .map_err(|err| err.to_string())?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.path().extension().map(OsStr::to_owned))
+        .any(|ext| ext == "uproject")
+    {
+        return Err("project root must contain a project descriptor".into());
+    }
+    let project_name = detect_project_name(&input.project_root)?;
+    if project_name == input.new_name {
+        return Err("new name must be different than current project name".into());
+    }
+    Ok(())
+}
+
+pub fn gather_context_from_input(input: &Input) -> Result<Context, String> {
+    let project_name = detect_project_name(&PathBuf::from(&input.project_root))?;
+    Ok(Context {
+        project_root: input.project_root.clone(),
+        project_name,
+        target_name: input.new_name.clone(),
+    })
+}
 
 pub fn start_rename_project_workflow() -> Result<(), String> {
     let context = gather_context()?;

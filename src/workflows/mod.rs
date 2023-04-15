@@ -1,6 +1,6 @@
 mod rename_module;
 mod rename_plugin;
-mod rename_project;
+pub mod rename_project;
 mod rename_target;
 mod workflow;
 
