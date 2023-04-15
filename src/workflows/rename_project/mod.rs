@@ -1,4 +1,5 @@
 mod changeset;
+mod interactive;
 
 use std::{
     ffi::OsStr,
@@ -6,12 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inquire::{validator::Validation, CustomUserError, Text};
 use regex::Regex;
 
 use crate::{engine::Engine, presentation::log};
 
-use self::changeset::generate_changeset;
+use self::{changeset::generate_changeset, interactive::get_params_from_user};
 
 /// Params needed to rename an Unreal Engine project.
 pub struct Params {
@@ -57,22 +57,73 @@ pub fn rename_project(params: Params) -> Result<(), String> {
 }
 
 fn validate_params(params: &Params) -> Result<(), String> {
-    if !params.project_root.is_dir() {
-        return Err("project root must be a directory".into());
+    validate_project_root_is_dir(&params.project_root)?;
+    validate_project_root_contains_project_descriptor(&params.project_root)?;
+    let project_name = detect_project_name(&params.project_root)?;
+    validate_new_name_is_not_empty(&params.new_name)?;
+    validate_new_name_is_novel(&project_name, &params.new_name)?;
+    validate_new_name_is_concise(&params.new_name)?;
+    validate_new_name_is_valid_identifier(&params.new_name)?;
+    Ok(())
+}
+
+fn validate_project_root_is_dir(project_root: &Path) -> Result<(), String> {
+    match project_root.is_dir() {
+        true => Ok(()),
+        false => Err("project root must be a directory".into()),
     }
-    if !fs::read_dir(&params.project_root)
+}
+
+fn validate_project_root_contains_project_descriptor(project_root: &Path) -> Result<(), String> {
+    match fs::read_dir(&project_root)
         .map_err(|err| err.to_string())?
         .filter_map(Result::ok)
         .filter_map(|entry| entry.path().extension().map(OsStr::to_owned))
         .any(|ext| ext == "uproject")
     {
-        return Err("project root must contain a project descriptor".into());
+        true => Ok(()),
+        false => Err("project root must contain a project descriptor".into()),
     }
-    let project_name = detect_project_name(&params.project_root)?;
-    if project_name == params.new_name {
-        return Err("new name must be different than current project name".into());
+}
+
+fn validate_new_name_is_novel(old_name: &str, new_name: &str) -> Result<(), String> {
+    match old_name != new_name {
+        true => Ok(()),
+        false => Err("new name must be different than current name".into()),
     }
-    Ok(())
+}
+
+fn validate_new_name_is_not_empty(new_name: &str) -> Result<(), String> {
+    match !new_name.trim().is_empty() {
+        true => Ok(()),
+        false => Err("new name must not be empty".into()),
+    }
+}
+
+fn validate_new_name_is_concise(new_name: &str) -> Result<(), String> {
+    let new_name_max_len = 20;
+    match new_name.len() <= new_name_max_len {
+        true => Ok(()),
+        false => {
+            let error_message = format!(
+                "new name must not be longer than {} characters",
+                new_name_max_len
+            );
+            Err(error_message)
+        }
+    }
+}
+
+fn validate_new_name_is_valid_identifier(new_name: &str) -> Result<(), String> {
+    let identifier_regex = Regex::new("^[_[[:alnum:]]]*$").expect("regex should be valid");
+    match identifier_regex.is_match(new_name) {
+        true => Ok(()),
+        false => {
+            let error_message =
+                "new name must be comprised of alphanumeric characters and underscores only";
+            Err(error_message.into())
+        }
+    }
 }
 
 fn gather_context(params: &Params) -> Result<Context, String> {
@@ -84,53 +135,6 @@ fn gather_context(params: &Params) -> Result<Context, String> {
     })
 }
 
-fn get_params_from_user() -> Result<Params, String> {
-    let project_root = get_project_root_from_user()?;
-    let target_name = get_target_name_from_user()?;
-    Ok(Params {
-        project_root,
-        new_name: target_name,
-    })
-}
-
-fn get_project_root_from_user() -> Result<PathBuf, String> {
-    Text::new("Project root directory path:")
-        .with_validator(validate_project_root_is_dir)
-        .with_validator(validate_project_root_contains_project_descriptor)
-        .prompt()
-        .map(|project_root| PathBuf::from(project_root))
-        .map_err(|err| err.to_string())
-}
-
-fn validate_project_root_is_dir(project_root: &str) -> Result<Validation, CustomUserError> {
-    match PathBuf::from(project_root).is_dir() {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = "Provided path is not a directory";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-fn validate_project_root_contains_project_descriptor(
-    project_root: &str,
-) -> Result<Validation, CustomUserError> {
-    match fs::read_dir(project_root)?
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.path().extension().map(OsStr::to_owned))
-        .any(|ext| ext == "uproject")
-    {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = "Provided directory does not contain a .uproject file";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-/// Detect the name of a project given the path to the project root directory.
-/// Assumes that the directory exists and that it contains a project descriptor.
-/// Returns an error in case of I/O issues.
 fn detect_project_name(project_root: &PathBuf) -> Result<String, String> {
     assert!(project_root.is_dir());
 
@@ -147,53 +151,6 @@ fn detect_project_name(project_root: &PathBuf) -> Result<String, String> {
         .and_then(|stem| stem.to_str())
         .map(|name| name.to_owned())
         .ok_or("project name is not valid Unicode".into())
-}
-
-fn get_target_name_from_user() -> Result<String, String> {
-    Text::new("Provide a new name for the project:")
-        .with_validator(validate_target_name_is_not_empty)
-        .with_validator(validate_target_name_is_concise)
-        .with_validator(validate_target_name_is_valid_identifier)
-        .prompt()
-        .map_err(|err| err.to_string())
-}
-
-fn validate_target_name_is_not_empty(target_name: &str) -> Result<Validation, CustomUserError> {
-    match !target_name.trim().is_empty() {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = "Target name must not be empty";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-fn validate_target_name_is_concise(target_name: &str) -> Result<Validation, CustomUserError> {
-    let target_name_max_len = 20;
-    match target_name.len() <= target_name_max_len {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = format!(
-                "Target name must not be longer than {} characters",
-                target_name_max_len
-            );
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-fn validate_target_name_is_valid_identifier(
-    target_name: &str,
-) -> Result<Validation, CustomUserError> {
-    let identifier_regex = Regex::new("^[_[[:alnum:]]]*$").expect("regex should be valid");
-    match identifier_regex.is_match(target_name) {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message =
-                "Target name must be comprised of alphanumeric characters and underscores only";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
 }
 
 /// Create a directory to store backup files in
