@@ -1,5 +1,4 @@
 mod changeset;
-mod context;
 
 use std::{
     ffi::OsStr,
@@ -7,31 +6,79 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inquire::{validator::Validation, Confirm, CustomUserError, Select, Text};
+use inquire::{validator::Validation, CustomUserError, Select, Text};
 use regex::Regex;
 
 use crate::{engine::Engine, presentation::log, unreal::Target};
 
-use self::{changeset::generate_changeset, context::Context};
+use self::changeset::generate_changeset;
 
-pub fn start_rename_target_workflow() -> Result<(), String> {
-    let context = gather_context()?;
+/// Params needed to rename an Unreal Engine target.
+pub struct Params {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// The specific target to rename.
+    pub target: String,
+    /// The target name for the target.
+    pub new_name: String,
+}
+
+/// Context needed to rename an Unreal Engine target.
+pub struct Context {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// Build targets for the project.
+    pub project_targets: Vec<Target>,
+    /// The specific target to rename.
+    pub target_target: Target,
+    /// The target name for the target.
+    pub target_name: String,
+}
+
+/// Rename an Unreal Engine target interactively, soliciting input parameters
+/// from the user with validation and guided selection.
+pub fn rename_target_interactive() -> Result<(), String> {
+    let params = get_params_from_user()?;
+    rename_target(params)
+}
+
+/// Rename an Unreal Engine target.
+pub fn rename_target(params: Params) -> Result<(), String> {
+    validate_params(&params)?;
+    let context = gather_context(&params)?;
     let changeset = generate_changeset(&context);
     let backup_dir = create_backup_dir(&context.project_root)?;
     let mut engine = Engine::new();
-    if let Err(err) = engine.execute(changeset, backup_dir) {
-        log::error(&err);
-        if user_confirms_revert() {
-            engine.revert()?;
-        }
+    if let Err(e) = engine.execute(changeset, backup_dir) {
+        log::error(&e);
+        engine.revert()?;
         print_failure_message(&context);
         return Ok(());
     }
+
     print_success_message(&context);
     Ok(())
 }
 
-fn gather_context() -> Result<Context, String> {
+fn get_params_from_user() -> Result<Params, String> {
+    let project_root = get_project_root_from_user()?;
+    let project_targets = detect_project_targets(&project_root)?;
+    let target_target = get_target_target_from_user(&project_targets)?;
+    let target_name = get_target_name_from_user(&project_targets)?;
+    Ok(Params {
+        project_root,
+        target: target_target.name,
+        new_name: target_name,
+    })
+}
+
+fn validate_params(_params: &Params) -> Result<(), String> {
+    // @todo
+    Ok(())
+}
+
+fn gather_context(_params: &Params) -> Result<Context, String> {
+    // @todo
     let project_root = get_project_root_from_user()?;
     let project_targets = detect_project_targets(&project_root)?;
     let target_target = get_target_target_from_user(&project_targets)?;
@@ -186,13 +233,6 @@ fn create_backup_dir(project_root: &Path) -> Result<PathBuf, String> {
     let backup_dir = project_root.join(".renom/backup");
     fs::create_dir_all(&backup_dir).map_err(|err| err.to_string())?;
     Ok(backup_dir)
-}
-
-/// Request revert desired from the user.
-fn user_confirms_revert() -> bool {
-    Confirm::new("Looks like something went wrong. Should we revert the changes made so far?")
-        .prompt()
-        .unwrap_or(false)
 }
 
 fn print_success_message(context: &Context) {

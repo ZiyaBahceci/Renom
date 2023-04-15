@@ -5,7 +5,7 @@ use crate::{
     unreal::Target,
 };
 
-use super::context::Context;
+use super::Context;
 
 /// Generate a changeset to rename an Unreal Engine target.
 pub fn generate_changeset(context: &Context) -> Vec<Change> {
