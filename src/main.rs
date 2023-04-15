@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use renom::{
     cli::{self, get_help_text, Command},
-    director,
     presentation::log,
+    wizard,
     workflows::{rename_project, Params},
 };
 
@@ -39,7 +39,7 @@ fn main() {
             Command::RenamePlugin => println!("not yet implemented"),
             Command::RenameTarget => println!("not yet implemented"),
             Command::RenameModule => println!("not yet implemented"),
-            Command::Wizard => director::start_interactive_dialogue(),
+            Command::Wizard => wizard::start_interactive_dialogue(),
         },
     }
 }
