@@ -1,69 +1,67 @@
-use std::path::PathBuf;
-
+use clap::Parser;
 use renom::{
-    cli::{self, get_help_text, Command},
+    cli::{
+        Cli,
+        Command::{RenameModule, RenamePlugin, RenameProject, RenameTarget, Wizard},
+    },
     presentation::log,
-    wizard,
+    wizard::start_interactive_dialogue,
     workflows::{rename_module, rename_plugin, rename_project, rename_target},
 };
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let parsed_args = cli::parse_args(&args);
-    if let Err((command, msg)) = parsed_args {
-        let help_text = get_help_text(&command);
-        println!("{help_text}\nerror: {msg}");
-        return;
-    }
-
-    let (command, options) = parsed_args.unwrap();
-    match command {
-        None => {
-            if options.contains_key("--help") {
-                let help_text = get_help_text(&command);
-                println!("{help_text}");
-            } else if options.contains_key("--version") {
-                let version = env!("CARGO_PKG_VERSION");
-                println!("{version}");
-            }
-        }
+    let cli = Cli::parse();
+    match cli.command {
+        None => { /* noop, clap will handle top-level help and version */ }
         Some(command) => match command {
-            Command::RenameProject => {
+            RenameProject { project, new_name } => {
                 if let Err(e) = rename_project(rename_project::Params {
-                    project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
-                    new_name: options["--new-name"].as_ref().unwrap().clone(),
+                    project_root: project,
+                    new_name,
                 }) {
                     log::error(e);
                 }
             }
-            Command::RenamePlugin => {
+            RenamePlugin {
+                project,
+                plugin,
+                new_name,
+            } => {
                 if let Err(e) = rename_plugin(rename_plugin::Params {
-                    project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
-                    plugin: options["--plugin"].as_ref().unwrap().clone(),
-                    new_name: options["--new-name"].as_ref().unwrap().clone(),
+                    project_root: project,
+                    plugin,
+                    new_name,
                 }) {
                     log::error(e);
                 }
             }
-            Command::RenameTarget => {
+            RenameTarget {
+                project,
+                target,
+                new_name,
+            } => {
                 if let Err(e) = rename_target(rename_target::Params {
-                    project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
-                    target: options["--target"].as_ref().unwrap().clone(),
-                    new_name: options["--new-name"].as_ref().unwrap().clone(),
+                    project_root: project,
+                    target,
+                    new_name,
                 }) {
                     log::error(e);
                 }
             }
-            Command::RenameModule => {
+            RenameModule {
+                project,
+                module,
+                new_name,
+            } => {
                 if let Err(e) = rename_module(rename_module::Params {
-                    project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
-                    module: options["--module"].as_ref().unwrap().clone(),
-                    new_name: options["--new-name"].as_ref().unwrap().clone(),
+                    project_root: project,
+                    module,
+                    new_name,
                 }) {
                     log::error(e);
                 }
             }
-            Command::Wizard => wizard::start_interactive_dialogue(),
+            Wizard => start_interactive_dialogue(),
         },
-    }
+    };
 }
