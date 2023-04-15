@@ -1,5 +1,4 @@
 mod changeset;
-mod context;
 
 use std::{
     ffi::OsStr,
@@ -7,44 +6,96 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inquire::{validator::Validation, Confirm, CustomUserError, Select, Text};
+use inquire::{validator::Validation, CustomUserError, Select, Text};
 use regex::Regex;
 use walkdir::WalkDir;
 
 use crate::{engine::Engine, presentation::log, unreal::Plugin};
 
-use self::{changeset::generate_changeset, context::Context};
+use self::changeset::generate_changeset;
 
-pub fn start_rename_plugin_workflow() -> Result<(), String> {
-    let context = gather_context()?;
+/// Params needed to rename an Unreal Engine plugin.
+pub struct Params {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// The specific plugin to rename.
+    pub plugin: String,
+    /// The target name for the plugin.
+    pub new_name: String,
+}
+
+/// Context needed to rename an Unreal Engine plugin.
+pub struct Context {
+    /// The root of the project.
+    pub project_root: PathBuf,
+    /// The name of the project.
+    pub project_name: String,
+    /// Plugins for the project.
+    pub project_plugins: Vec<Plugin>,
+    /// The specific plugin to rename.
+    pub target_plugin: Plugin,
+    /// The target name for the plugin.
+    pub target_name: String,
+}
+
+/// Rename an Unreal Engine plugin interactively, soliciting input parameters
+/// from the user with validation and guided selection.
+pub fn rename_plugin_interactive() -> Result<(), String> {
+    let params = get_params_from_user()?;
+    rename_plugin(params)
+}
+
+/// Rename an Unreal Engine plugin.
+pub fn rename_plugin(params: Params) -> Result<(), String> {
+    validate_params(&params)?;
+    let context = gather_context(&params)?;
     let changeset = generate_changeset(&context);
     let backup_dir = create_backup_dir(&context.project_root)?;
     let mut engine = Engine::new();
-    if let Err(err) = engine.execute(changeset, backup_dir) {
-        log::error(&err);
-        if user_confirms_revert() {
-            engine.revert()?;
-        }
+    if let Err(e) = engine.execute(changeset, backup_dir) {
+        log::error(&e);
+        engine.revert()?;
         print_failure_message(&context);
         return Ok(());
     }
+
     print_success_message(&context);
     Ok(())
 }
 
-fn gather_context() -> Result<Context, String> {
+fn get_params_from_user() -> Result<Params, String> {
     let project_root = get_project_root_from_user()?;
-    let project_name = detect_project_name(&project_root)?;
     let project_plugins = detect_project_plugins(&project_root)?;
     let target_plugin = get_target_plugin_from_user(&project_plugins)?;
     let target_name = get_target_name_from_user(&project_plugins)?;
 
-    Ok(Context {
+    Ok(Params {
         project_root,
+        plugin: target_plugin.name,
+        new_name: target_name,
+    })
+}
+
+fn validate_params(_params: &Params) -> Result<(), String> {
+    // @todo
+    Ok(())
+}
+
+fn gather_context(params: &Params) -> Result<Context, String> {
+    let project_name = detect_project_name(&params.project_root)?;
+    let project_plugins = detect_project_plugins(&params.project_root)?;
+    let target_plugin = project_plugins
+        .iter()
+        .find(|plugin| plugin.name == params.plugin)
+        .unwrap()
+        .clone();
+
+    Ok(Context {
+        project_root: params.project_root.clone(),
         project_name,
         project_plugins,
         target_plugin,
-        target_name,
+        target_name: params.new_name.clone(),
     })
 }
 
@@ -216,13 +267,6 @@ fn create_backup_dir(project_root: &Path) -> Result<PathBuf, String> {
     let backup_dir = project_root.join(".renom/backup");
     fs::create_dir_all(&backup_dir).map_err(|err| err.to_string())?;
     Ok(backup_dir)
-}
-
-/// Request revert desired from the user.
-fn user_confirms_revert() -> bool {
-    Confirm::new("Looks like something went wrong. Should we revert the changes made so far?")
-        .prompt()
-        .unwrap_or(false)
 }
 
 fn print_success_message(context: &Context) {

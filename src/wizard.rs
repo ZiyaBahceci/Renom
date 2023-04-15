@@ -3,8 +3,8 @@ use inquire::{Confirm, Select};
 use crate::{
     presentation::log,
     workflows::{
-        rename_project_interactive, rename_target_interactive, start_rename_module_workflow,
-        start_rename_plugin_workflow, Workflow,
+        rename_plugin_interactive, rename_project_interactive, rename_target_interactive,
+        start_rename_module_workflow, Workflow,
     },
 };
 
@@ -29,7 +29,7 @@ pub fn start_interactive_dialogue() {
     loop {
         match ok_or_quit!(request_workflow_selection_from_user()) {
             Workflow::RenameProject => ok_or_quit!(rename_project_interactive()),
-            Workflow::RenamePlugin => ok_or_quit!(start_rename_plugin_workflow()),
+            Workflow::RenamePlugin => ok_or_quit!(rename_plugin_interactive()),
             Workflow::RenameTarget => ok_or_quit!(rename_target_interactive()),
             Workflow::RenameModule => ok_or_quit!(start_rename_module_workflow()),
         };

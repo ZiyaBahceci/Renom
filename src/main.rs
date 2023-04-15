@@ -4,7 +4,7 @@ use renom::{
     cli::{self, get_help_text, Command},
     presentation::log,
     wizard,
-    workflows::{rename_project, rename_target},
+    workflows::{rename_plugin, rename_project, rename_target},
 };
 
 fn main() {
@@ -36,7 +36,15 @@ fn main() {
                     log::error(e);
                 }
             }
-            Command::RenamePlugin => println!("not yet implemented"),
+            Command::RenamePlugin => {
+                if let Err(e) = rename_plugin(rename_plugin::Params {
+                    project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
+                    plugin: options["--plugin"].as_ref().unwrap().clone(),
+                    new_name: options["--new-name"].as_ref().unwrap().clone(),
+                }) {
+                    log::error(e);
+                }
+            }
             Command::RenameTarget => {
                 if let Err(e) = rename_target(rename_target::Params {
                     project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
