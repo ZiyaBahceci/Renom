@@ -1,10 +1,10 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use renom::{
     cli::{self, get_help_text, Command},
     director,
-    engine::Engine,
-    workflows::{self, changeset::generate_changeset, gather_context_from_input, validate_input},
+    presentation::log,
+    workflows::{rename_project, Params},
 };
 
 fn main() {
@@ -29,41 +29,11 @@ fn main() {
         }
         Some(command) => match command {
             Command::RenameProject => {
-                // construct input from arguments
-                let project_root = PathBuf::from(options["--project"].as_ref().unwrap());
-                let new_name = options["--new-name"].as_ref().unwrap().clone();
-                let input = workflows::rename_project::Input {
-                    project_root,
-                    new_name,
-                };
-
-                // validate input
-                if let Err(e) = validate_input(&input) {
-                    println!("invalid input: {e}");
-                    return;
-                }
-
-                // gather context
-                let context = match gather_context_from_input(&input) {
-                    Ok(context) => context,
-                    Err(e) => {
-                        println!("failed to gather context: {e}");
-                        return;
-                    }
-                };
-
-                // build changeset
-                let changeset = generate_changeset(&context);
-
-                // execute (and revert on failure)
-                let mut engine = Engine::new();
-                let backup_dir = context.project_root.join(".renom").join("backup");
-                fs::create_dir_all(&backup_dir).unwrap();
-                if let Err(e) = engine.execute(changeset, backup_dir) {
-                    println!("error while renaming project: {e}");
-                    if let Err(e) = engine.revert() {
-                        println!("error while reverting: {e}");
-                    }
+                if let Err(e) = rename_project(Params {
+                    project_root: PathBuf::from(options["--project"].as_ref().unwrap()),
+                    new_name: options["--new-name"].as_ref().unwrap().clone(),
+                }) {
+                    log::error(e);
                 }
             }
             Command::RenamePlugin => println!("not yet implemented"),
