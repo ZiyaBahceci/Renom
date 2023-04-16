@@ -11,11 +11,11 @@ use super::Context;
 pub fn generate_changeset(context: &Context) -> Vec<Change> {
     let Context {
         project_targets,
-        target_target: Target {
+        target: Target {
             name: old_name,
             path: target_file,
         },
-        target_name: new_name,
+        new_name,
         ..
     } = context;
 
