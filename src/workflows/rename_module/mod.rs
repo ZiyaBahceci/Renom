@@ -1,4 +1,5 @@
 mod changeset;
+mod interactive;
 
 use std::{
     ffi::OsStr,
@@ -6,7 +7,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use inquire::{validator::Validation, CustomUserError, Select, Text};
 use regex::Regex;
 use walkdir::WalkDir;
 
@@ -16,7 +16,7 @@ use crate::{
     unreal::{Module, ModuleType, Plugin},
 };
 
-use self::changeset::generate_changeset;
+use self::{changeset::generate_changeset, interactive::get_params_from_user};
 
 /// Params needed to rename an Unreal Engine module.
 pub struct Params {
@@ -24,7 +24,7 @@ pub struct Params {
     pub project_root: PathBuf,
     /// The specific module to rename.
     pub module: String,
-    /// The target name for the module.
+    /// The new name for the module.
     pub new_name: String,
 }
 
@@ -41,9 +41,9 @@ pub struct Context {
     /// Code modules in the project.
     pub modules: Vec<Module>,
     /// The specific module to rename.
-    pub target_module: Module,
-    /// The target name for the module.
-    pub target_name: String,
+    pub module: Module,
+    /// The new name for the module.
+    pub new_name: String,
     /// The source file that includes the module implement macro.
     pub source_with_implement_macro: Option<PathBuf>,
     /// Header files that include the module export macro.
@@ -75,104 +75,95 @@ pub fn rename_module(params: Params) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_params(_params: &Params) -> Result<(), String> {
-    // @todo
+fn validate_params(params: &Params) -> Result<(), String> {
+    validate_project_root_is_dir(&params.project_root)?;
+    validate_project_root_contains_project_descriptor(&params.project_root)?;
+    validate_project_root_contains_source_dir(&params.project_root)?;
+    let project_plugins = detect_project_plugins(&params.project_root)?;
+    let modules = detect_project_modules(&params.project_root)?
+        .into_iter()
+        .chain(detect_plugin_modules(&project_plugins)?)
+        .collect::<Vec<Module>>();
+    validate_module_exists(&params.module, &modules)?;
+    validate_new_name_is_not_empty(&params.new_name)?;
+    validate_new_name_is_concise(&params.new_name)?;
+    validate_new_name_is_unique(&params.new_name, &modules)?;
+    validate_new_name_is_valid_identifier(&params.new_name)?;
     Ok(())
 }
 
-fn get_params_from_user() -> Result<Params, String> {
-    let project_root = get_project_root_from_user()?;
-    let project_plugins = detect_project_plugins(&project_root)?;
-    let modules = detect_project_modules(&project_root)?
-        .into_iter()
-        .chain(detect_plugin_modules(&project_plugins)?)
-        .collect::<Vec<Module>>();
-    let target_module = get_target_module_from_user(&modules)?;
-    let target_name = get_target_name_from_user(&modules)?;
-
-    Ok(Params {
-        project_root,
-        module: target_module.name,
-        new_name: target_name,
-    })
-}
-
-fn gather_context(params: &Params) -> Result<Context, String> {
-    let project_root = params.project_root.clone();
-    let project_name = detect_project_name(&project_root)?;
-    let project_plugins = detect_project_plugins(&project_root)?;
-    let modules = detect_project_modules(&project_root)?
-        .into_iter()
-        .chain(detect_plugin_modules(&project_plugins)?)
-        .collect::<Vec<Module>>();
-    let project_targets = detect_project_targets(&project_root)?;
-    let project_config_files = detect_project_config_files(&project_root)?;
-    let target_module = modules
-        .iter()
-        .find(|module| module.name == params.module)
-        .unwrap()
-        .clone();
-    let implementing_source = find_implementing_source(&target_module.root);
-    let headers_with_export_macro =
-        find_headers_with_export_macro(&target_module.root, &target_module.name);
-
-    Ok(Context {
-        project_root,
-        project_name,
-        project_targets,
-        project_config_files,
-        modules,
-        target_module,
-        target_name: params.new_name.clone(),
-        source_with_implement_macro: implementing_source,
-        headers_with_export_macro,
-    })
-}
-
-fn get_project_root_from_user() -> Result<PathBuf, String> {
-    Text::new("Project root directory path:")
-        .with_validator(validate_project_root_is_dir)
-        .with_validator(validate_project_root_contains_project_descriptor)
-        .with_validator(validate_project_root_contains_source_dir)
-        .prompt()
-        .map(|project_root| PathBuf::from(project_root))
-        .map_err(|err| err.to_string())
-}
-
-fn validate_project_root_is_dir(project_root: &str) -> Result<Validation, CustomUserError> {
-    match PathBuf::from(project_root).is_dir() {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = "Provided path is not a directory";
-            Ok(Validation::Invalid(error_message.into()))
-        }
+fn validate_project_root_is_dir(project_root: &Path) -> Result<(), String> {
+    match project_root.is_dir() {
+        true => Ok(()),
+        false => Err("project root must be a directory".into()),
     }
 }
 
-fn validate_project_root_contains_project_descriptor(
-    project_root: &str,
-) -> Result<Validation, CustomUserError> {
-    match fs::read_dir(project_root)?
+fn validate_project_root_contains_project_descriptor(project_root: &Path) -> Result<(), String> {
+    match fs::read_dir(project_root)
+        .map_err(|e| e.to_string())?
         .filter_map(Result::ok)
         .filter_map(|entry| entry.path().extension().map(OsStr::to_owned))
         .any(|ext| ext == "uproject")
     {
-        true => Ok(Validation::Valid),
+        true => Ok(()),
+        false => Err("project root must contain a project descriptor".into()),
+    }
+}
+
+fn validate_project_root_contains_source_dir(project_root: &Path) -> Result<(), String> {
+    match project_root.join("Source").is_dir() {
+        true => Ok(()),
+        false => Err("project root must contain a Source folder".into()),
+    }
+}
+
+fn validate_module_exists(module: &str, modules: &[Module]) -> Result<(), String> {
+    match modules.iter().any(|other| other.name == module) {
+        true => Ok(()),
+        false => Err("module must be part of project".into()),
+    }
+}
+
+fn validate_new_name_is_not_empty(new_name: &str) -> Result<(), String> {
+    match !new_name.trim().is_empty() {
+        true => Ok(()),
+        false => Err("new name must not be empty".into()),
+    }
+}
+
+fn validate_new_name_is_concise(new_name: &str) -> Result<(), String> {
+    let new_name_max_len = 30;
+    match new_name.len() <= new_name_max_len {
+        true => Ok(()),
         false => {
-            let error_message = "Provided directory does not contain a .uproject file";
-            Ok(Validation::Invalid(error_message.into()))
+            let error_message = format!(
+                "new name must not be longer than {} characters",
+                new_name_max_len
+            );
+            Err(error_message)
         }
     }
 }
 
-fn validate_project_root_contains_source_dir(
-    project_root: &str,
-) -> Result<Validation, CustomUserError> {
-    match PathBuf::from(project_root).join("Source").is_dir() {
-        true => Ok(Validation::Valid),
+fn validate_new_name_is_unique(new_name: &str, modules: &[Module]) -> Result<(), String> {
+    match modules.iter().all(|module| module.name != new_name) {
+        true => Ok(()),
         false => {
-            let error_message = "Provided directory does not contain a Source folder";
-            Ok(Validation::Invalid(error_message.into()))
+            let error_message = "new name must not conflict with another module";
+            Err(error_message.into())
+        }
+    }
+}
+
+fn validate_new_name_is_valid_identifier(new_name: &str) -> Result<(), String> {
+    let identifier_regex = Regex::new("^[_[[:alnum:]]]*$").expect("regex should be valid");
+    match identifier_regex.is_match(new_name) {
+        true => Ok(()),
+        false => {
+            let error_message =
+                "new name must be comprised of alphanumeric characters and underscores only";
+            Err(error_message.into())
         }
     }
 }
@@ -308,74 +299,6 @@ fn detect_project_config_files(project_root: &Path) -> Result<Vec<PathBuf>, Stri
         .collect())
 }
 
-fn get_target_module_from_user(modules: &[Module]) -> Result<Module, String> {
-    Select::new("Choose a module:", modules.to_vec())
-        .prompt()
-        .map_err(|err| err.to_string())
-}
-
-fn get_target_name_from_user(modules: &[Module]) -> Result<String, String> {
-    let modules = modules.to_vec();
-    Text::new("Provide a new name for the module:")
-        .with_validator(validate_target_name_is_not_empty)
-        .with_validator(validate_target_name_is_concise)
-        .with_validator(move |input: &str| validate_target_name_is_unique(input, &modules))
-        .with_validator(validate_target_name_is_valid_identifier)
-        .prompt()
-        .map_err(|err| err.to_string())
-}
-
-fn validate_target_name_is_not_empty(target_name: &str) -> Result<Validation, CustomUserError> {
-    match !target_name.trim().is_empty() {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = "Target name must not be empty";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-fn validate_target_name_is_concise(target_name: &str) -> Result<Validation, CustomUserError> {
-    let target_name_max_len = 30;
-    match target_name.len() <= target_name_max_len {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = format!(
-                "Target name must not be longer than {} characters",
-                target_name_max_len
-            );
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-fn validate_target_name_is_unique(
-    target_name: &str,
-    modules: &[Module],
-) -> Result<Validation, CustomUserError> {
-    match modules.iter().all(|module| module.name != target_name) {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message = "Target name must not conflict with another module";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
-fn validate_target_name_is_valid_identifier(
-    target_name: &str,
-) -> Result<Validation, CustomUserError> {
-    let identifier_regex = Regex::new("^[_[[:alnum:]]]*$").expect("regex should be valid");
-    match identifier_regex.is_match(target_name) {
-        true => Ok(Validation::Valid),
-        false => {
-            let error_message =
-                "Target name must be comprised of alphanumeric characters and underscores only";
-            Ok(Validation::Invalid(error_message.into()))
-        }
-    }
-}
-
 fn find_implementing_source(module_root: &Path) -> Option<PathBuf> {
     WalkDir::new(module_root)
         .into_iter()
@@ -400,6 +323,38 @@ fn find_headers_with_export_macro(module_root: &Path, module_name: &str) -> Vec<
         .collect()
 }
 
+fn gather_context(params: &Params) -> Result<Context, String> {
+    let project_root = params.project_root.clone();
+    let project_name = detect_project_name(&project_root)?;
+    let project_plugins = detect_project_plugins(&project_root)?;
+    let modules = detect_project_modules(&project_root)?
+        .into_iter()
+        .chain(detect_plugin_modules(&project_plugins)?)
+        .collect::<Vec<Module>>();
+    let project_targets = detect_project_targets(&project_root)?;
+    let project_config_files = detect_project_config_files(&project_root)?;
+    let target_module = modules
+        .iter()
+        .find(|module| module.name == params.module)
+        .unwrap()
+        .clone();
+    let implementing_source = find_implementing_source(&target_module.root);
+    let headers_with_export_macro =
+        find_headers_with_export_macro(&target_module.root, &target_module.name);
+
+    Ok(Context {
+        project_root,
+        project_name,
+        project_targets,
+        project_config_files,
+        modules,
+        module: target_module,
+        new_name: params.new_name.clone(),
+        source_with_implement_macro: implementing_source,
+        headers_with_export_macro,
+    })
+}
+
 fn create_backup_dir(project_root: &Path) -> Result<PathBuf, String> {
     let backup_dir = project_root.join(".renom/backup");
     fs::create_dir_all(&backup_dir).map_err(|err| err.to_string())?;
@@ -409,13 +364,13 @@ fn create_backup_dir(project_root: &Path) -> Result<PathBuf, String> {
 fn print_success_message(context: &Context) {
     log::success(format!(
         "Successfully renamed module {} to {}.",
-        context.target_module.name, context.target_name
+        context.module.name, context.new_name
     ));
 }
 
 fn print_failure_message(context: &Context) {
     log::error(format!(
         "Failed to rename module {} to {}.",
-        context.target_module.name, context.target_name
+        context.module.name, context.new_name
     ));
 }
